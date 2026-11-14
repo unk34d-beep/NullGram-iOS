@@ -17,39 +17,79 @@ jobs:
 
       - name: Apply NullGram customization
         run: |
+          set -euo pipefail
+          git apply --check NullGram-iOS.patch
           git apply NullGram-iOS.patch
           mkdir -p Telegram/Telegram-iOS/Telegram.icon/Assets
+          test -s NullGram.png
           cp NullGram.png Telegram/Telegram-iOS/Telegram.icon/Assets/NullGram.png
 
       - name: Select installed Xcode 27
         run: |
+          set -euo pipefail
           XCODE_PATH="$(find /Applications -maxdepth 1 -type d -name 'Xcode_27*.app' -print | sort -V | tail -n 1)"
-          if [ -z "$XCODE_PATH" ]; then echo "Xcode 27 not found"; exit 1; fi
+          if [ -z "$XCODE_PATH" ]; then echo "::error::Xcode 27 not found"; exit 1; fi
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
-      - name: Renew temporary profiles and build unsigned IPA
+      - name: Generate temporary provisioning profiles
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          mkdir -p build/renewed-profiles
+          python3 -c 'from pathlib import Path; p=Path("build-system/Make/GenerateProfiles.py"); s=p.read_text(); old="    # Remove the DER-Encoded-Profile (signature)"; nl=chr(10); insert=nl.join(["    import datetime", "    profile=plistlib.loads(open(parsed_plist_file, "rb").read())", "    profile["ExpirationDate"]=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=3650)", "    with open(parsed_plist_file, "wb") as f: plistlib.dump(profile,f)", "", old]); assert s.count(old)==1; p.write_text(s.replace(old,insert,1))'
+          echo "Generating profiles..."
+          python3 -u build-system/Make/Make.py generate-verification-profiles \
+            --configurationPath="build-system/appstore-configuration.json" \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --destination=build/renewed-profiles
+          PROFILE_COUNT="$(find build/renewed-profiles -maxdepth 1 -name '*.mobileprovision' -type f | wc -l | tr -d ' ')"
+          echo "Generated profile count: $PROFILE_COUNT"
+          test "$PROFILE_COUNT" -eq 9
+          cp build/renewed-profiles/*.mobileprovision build-system/fake-codesigning/profiles/
+          test -s build-system/fake-codesigning/profiles/Intents.mobileprovision
+          echo "Profiles copied and validated."
+
+      - name: Import and preflight signing identity
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          echo "[1/4] Importing certificate and creating temporary keychain..."
+          python3 -u build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          echo "[2/4] Confirming profile certificate matches Public.cer..."
+          PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
+          CERT_SHA1="$(openssl x509 -inform DER -in build-system/fake-codesigning/certs/Public.cer -noout -fingerprint -sha1 | sed 's/.*=//' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          echo "Profile certificate SHA1: $PROFILE_SHA1"
+          echo "Imported certificate SHA1: $CERT_SHA1"
+          if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Provisioning profile certificate does not match Public.cer"; exit 1; fi
+          echo "[3/4] Trusting certificate in the temporary keychain (45-second timeout)..."
+          python3 - <<'PY'
+          import subprocess, sys
+          command = ['security', 'add-trusted-cert', '-r', 'trustRoot', '-p', 'codeSign', '-k', 'temp.keychain', 'build-system/fake-codesigning/certs/Public.cer']
+          try:
+              result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
+              print(result.stdout, end='', flush=True)
+              if result.returncode:
+                  print(f'::error::add-trusted-cert exited {result.returncode}', flush=True)
+                  sys.exit(result.returncode)
+          except subprocess.TimeoutExpired as error:
+              print(f'::error::add-trusted-cert timed out after {error.timeout}s; refusing to leave the job hanging', flush=True)
+              sys.exit(124)
+          PY
+          echo "[4/4] Checking that codesign sees the matching identity..."
+          IDENTITY_OUTPUT="$(security find-identity -v -p codesigning temp.keychain)"
+          echo "$IDENTITY_OUTPUT"
+          if ! echo "$IDENTITY_OUTPUT" | grep -qi "$PROFILE_SHA1"; then echo "::error::No valid codesigning identity matches Intents.mobileprovision"; exit 1; fi
+          echo "Signing preflight passed."
+
+      - name: Build unsigned IPA
+        timeout-minutes: 300
         run: |
           set -euo pipefail
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
-          python3 -c 'from pathlib import Path; p=Path("build-system/Make/GenerateProfiles.py"); s=p.read_text(); old="    # Remove the DER-Encoded-Profile (signature)"; nl=chr(10); insert=nl.join(["    import datetime", "    profile=plistlib.loads(open(parsed_plist_file, \"rb\").read())", "    profile[\"ExpirationDate\"]=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=3650)", "    with open(parsed_plist_file, \"wb\") as f: plistlib.dump(profile,f)", "", old]); assert s.count(old)==1; p.write_text(s.replace(old,insert,1))'
-          python3 -u build-system/Make/Make.py generate-verification-profiles \
-            --configurationPath="build-system/appstore-configuration.json" \
-            --codesigningInformationPath=build-system/fake-codesigning \
-            --destination=build/renewed-profiles
-          cp build/renewed-profiles/*.mobileprovision build-system/fake-codesigning/profiles/
-          # Profile generation changes the macOS keychain search list; import and trust the matching self-signed test identity in the ephemeral runner keychain.
-          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
-          security add-trusted-cert -r trustRoot -p codeSign -k temp.keychain build-system/fake-codesigning/certs/Public.cer
-          PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
-          IDENTITY_OUTPUT="$(security find-identity -v -p codesigning temp.keychain)"
-          echo "$IDENTITY_OUTPUT"
-          if ! echo "$IDENTITY_OUTPUT" | grep -qi "$PROFILE_SHA1"; then
-            echo "::error::No trusted signing identity matches Intents.mobileprovision; stopping before the long build."
-            exit 1
-          fi
+          echo "Starting Bazel build; build number $BUILD_NUMBER"
           python3 -u build-system/Make/Make.py \
             --overrideXcodeVersion \
             --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
@@ -60,8 +100,10 @@ jobs:
             --buildNumber="$BUILD_NUMBER"
           mkdir -p build/artifacts
           IPA_PATH="$(find bazel-out -path '*/bin/Telegram/*.ipa' -print -quit)"
-          if [ -z "$IPA_PATH" ]; then echo "IPA output not found"; exit 1; fi
+          if [ -z "$IPA_PATH" ]; then echo "::error::IPA output not found"; exit 1; fi
           cp "$IPA_PATH" build/artifacts/NullGram.ipa
+          test -s build/artifacts/NullGram.ipa
+          echo "IPA created: $(du -h build/artifacts/NullGram.ipa | cut -f1)"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
