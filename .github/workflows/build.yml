@@ -36,13 +36,26 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('build-system/Make/GenerateProfiles.py')
+          source = path.read_text()
+          needle = '    # Remove the DER-Encoded-Profile (signature)'
+          replacement = chr(10).join([
+              '    import datetime',
+              '    profile = plistlib.loads(open(parsed_plist_file, 'rb').read())',
+              '    profile['ExpirationDate'] = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=3650)',
+              '    with open(parsed_plist_file, 'wb') as stream: plistlib.dump(profile, stream)',
+              needle,
+          ])
+          if source.count(needle) != 1:
+              raise SystemExit(f'Expected one profile signature marker, got {source.count(needle)}')
+          path.write_text(source.replace(needle, replacement, 1))
+          print('Applied temporary profile expiration adjustment.', flush=True)
+          PY
           mkdir -p build/renewed-profiles
-          python3 -c 'from pathlib import Path; p=Path("build-system/Make/GenerateProfiles.py"); s=p.read_text(); old="    # Remove the DER-Encoded-Profile (signature)"; nl=chr(10); insert=nl.join(["    import datetime", "    profile=plistlib.loads(open(parsed_plist_file, "rb").read())", "    profile["ExpirationDate"]=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=3650)", "    with open(parsed_plist_file, "wb") as f: plistlib.dump(profile,f)", "", old]); assert s.count(old)==1; p.write_text(s.replace(old,insert,1))'
           echo "Generating profiles..."
-          python3 -u build-system/Make/Make.py generate-verification-profiles \
-            --configurationPath="build-system/appstore-configuration.json" \
-            --codesigningInformationPath=build-system/fake-codesigning \
-            --destination=build/renewed-profiles
+          python3 -u build-system/Make/Make.py generate-verification-profiles --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --destination=build/renewed-profiles
           PROFILE_COUNT="$(find build/renewed-profiles -maxdepth 1 -name '*.mobileprovision' -type f | wc -l | tr -d ' ')"
           echo "Generated profile count: $PROFILE_COUNT"
           test "$PROFILE_COUNT" -eq 9
@@ -54,15 +67,15 @@ jobs:
         timeout-minutes: 3
         run: |
           set -euo pipefail
-          echo "[1/4] Importing certificate and creating temporary keychain..."
+          echo "[1/4] Importing certificate into temporary keychain..."
           python3 -u build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
-          echo "[2/4] Confirming profile certificate matches Public.cer..."
+          echo "[2/4] Comparing profile and certificate SHA1..."
           PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
           CERT_SHA1="$(openssl x509 -inform DER -in build-system/fake-codesigning/certs/Public.cer -noout -fingerprint -sha1 | sed 's/.*=//' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
           echo "Profile certificate SHA1: $PROFILE_SHA1"
-          echo "Imported certificate SHA1: $CERT_SHA1"
-          if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Provisioning profile certificate does not match Public.cer"; exit 1; fi
-          echo "[3/4] Trusting certificate in the temporary keychain (45-second timeout)..."
+          echo "Public.cer SHA1: $CERT_SHA1"
+          if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Intents profile certificate does not match Public.cer"; exit 1; fi
+          echo "[3/4] Trusting certificate in the temporary keychain (45-second limit)..."
           python3 - <<'PY'
           import subprocess, sys
           command = ['security', 'add-trusted-cert', '-r', 'trustRoot', '-p', 'codeSign', '-k', 'temp.keychain', 'build-system/fake-codesigning/certs/Public.cer']
@@ -73,10 +86,10 @@ jobs:
                   print(f'::error::add-trusted-cert exited {result.returncode}', flush=True)
                   sys.exit(result.returncode)
           except subprocess.TimeoutExpired as error:
-              print(f'::error::add-trusted-cert timed out after {error.timeout}s; refusing to leave the job hanging', flush=True)
+              print(f'::error::add-trusted-cert timed out after {error.timeout}s; refusing to hang the job', flush=True)
               sys.exit(124)
           PY
-          echo "[4/4] Checking that codesign sees the matching identity..."
+          echo "[4/4] Checking the codesigning identity..."
           IDENTITY_OUTPUT="$(security find-identity -v -p codesigning temp.keychain)"
           echo "$IDENTITY_OUTPUT"
           if ! echo "$IDENTITY_OUTPUT" | grep -qi "$PROFILE_SHA1"; then echo "::error::No valid codesigning identity matches Intents.mobileprovision"; exit 1; fi
@@ -90,14 +103,7 @@ jobs:
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
           echo "Starting Bazel build; build number $BUILD_NUMBER"
-          python3 -u build-system/Make/Make.py \
-            --overrideXcodeVersion \
-            --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
-            build \
-            --configurationPath="build-system/appstore-configuration.json" \
-            --codesigningInformationPath=build-system/fake-codesigning \
-            --configuration=release_arm64 \
-            --buildNumber="$BUILD_NUMBER"
+          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" build --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
           mkdir -p build/artifacts
           IPA_PATH="$(find bazel-out -path '*/bin/Telegram/*.ipa' -print -quit)"
           if [ -z "$IPA_PATH" ]; then echo "::error::IPA output not found"; exit 1; fi
