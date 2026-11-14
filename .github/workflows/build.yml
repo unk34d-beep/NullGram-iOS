@@ -31,6 +31,17 @@ jobs:
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          path = Path("Telegram/BUILD")
+          source = path.read_text()
+          updated, count = re.subn(r'provisioning_profile\s*=\s*select\(\{\n.*?\n    \}\),', 'provisioning_profile = None,', source, flags=re.S)
+          if count != 9:
+              raise SystemExit(f"Expected 9 test provisioning profiles, found {count}")
+          path.write_text(updated)
+          print(f"Removed {count} expired test provisioning profile references")
+          PY
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
           python3 -u build-system/Make/Make.py \
             --overrideXcodeVersion \
@@ -39,8 +50,7 @@ jobs:
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \
-            --buildNumber="$BUILD_NUMBER" \
-            --disableProvisioningProfiles
+            --buildNumber="$BUILD_NUMBER"
           mkdir -p build/artifacts
           IPA_PATH="$(find bazel-out -path '*/bin/Telegram/*.ipa' -print -quit)"
           if [ -z "$IPA_PATH" ]; then echo "IPA output not found"; exit 1; fi
