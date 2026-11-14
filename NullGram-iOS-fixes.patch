@@ -1,0 +1,92 @@
+--- a/submodules/Display/Source/WindowContent.swift
++++ b/submodules/Display/Source/WindowContent.swift
+@@ -293,7 +293,7 @@
+     /// coordinates. Nil before iOS 27.1.
+     fileprivate var activeDivision: CGRect? {
+         if #available(iOS 27.1, *) {
+-            return self.eventView.reservedRegions(kind: .division).first(where: \.isActive)?.frame
++            return self.eventView.reservedRegions(kind: .division).first(where: { $0.isActive })?.frame
+         }
+         return nil
+     }
+--- a/submodules/SettingsUI/Sources/Language Selection/LocalizationListControllerNode.swift
++++ b/submodules/SettingsUI/Sources/Language Selection/LocalizationListControllerNode.swift
+@@ -185,7 +185,7 @@
+                 let normalizedQuery = query.folding(options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive], locale: nil)
+                 var result: [LocalizationInfo] = []
+                 var uniqueIds = Set<String>()
+-                for info in listState.availableSavedLocalizations + listState.availableOfficialLocalizations {
++                for info in listState.availableSavedLocalizations + listState.availableOfficialLocalizations where ["en", "ru"].contains(info.languageCode) {
+                     let title = info.title.folding(options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive], locale: nil)
+                     let localizedTitle = info.localizedTitle.folding(options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive], locale: nil)
+ 
+@@ -523,7 +523,7 @@
+                 }
+             }
+             
+-            if !localizationListState.availableOfficialLocalizations.isEmpty {
++            if localizationListState.availableOfficialLocalizations.contains(where: { ["en", "ru"].contains($0.languageCode) }) {
+                 strongSelf.currentListState = localizationListState
+                 
+                 if translateButtonAvailable || chatTranslationAvailable {
+@@ -566,7 +566,7 @@
+                     }
+                 }
+                 
+-                let availableSavedLocalizations = localizationListState.availableSavedLocalizations.filter({ info in !localizationListState.availableOfficialLocalizations.contains(where: { $0.languageCode == info.languageCode }) })
++                let availableSavedLocalizations = localizationListState.availableSavedLocalizations.filter({ info in ["en", "ru"].contains(info.languageCode) && !localizationListState.availableOfficialLocalizations.contains(where: { $0.languageCode == info.languageCode }) })
+                 if availableSavedLocalizations.isEmpty {
+                     updateCanStartEditing(nil)
+                 } else {
+@@ -584,7 +584,7 @@
+                 } else {
+                     entries.append(.localizationTitle(text: presentationData.strings.Localization_InterfaceLanguage.uppercased(), section: LanguageListSection.official.rawValue))
+                 }
+-                for info in localizationListState.availableOfficialLocalizations {
++                for info in localizationListState.availableOfficialLocalizations where ["en", "ru"].contains(info.languageCode) {
+                     if existingIds.contains(info.languageCode) {
+                         continue
+                     }
+--- a/submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift
++++ b/submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift
+@@ -4319,9 +4319,9 @@
+         context.sharedContext.accountManager.sharedData(keys: [SharedDataKeys.localizationSettings])
+     )
+     |> map { localizationListState, sharedData -> [LocalizationInfo] in
+-        if !localizationListState.availableOfficialLocalizations.isEmpty {
++        if localizationListState.availableOfficialLocalizations.contains(where: { ["en", "ru"].contains($0.languageCode) }) {
+             var existingIds = Set<String>()
+-            let availableSavedLocalizations = localizationListState.availableSavedLocalizations.filter({ info in !localizationListState.availableOfficialLocalizations.contains(where: { $0.languageCode == info.languageCode }) })
++            let availableSavedLocalizations = localizationListState.availableSavedLocalizations.filter({ info in ["en", "ru"].contains(info.languageCode) && !localizationListState.availableOfficialLocalizations.contains(where: { $0.languageCode == info.languageCode }) })
+             
+             var activeLanguageCode: String?
+             if let localizationSettings = sharedData.entries[SharedDataKeys.localizationSettings]?.get(LocalizationSettings.self) {
+@@ -4338,7 +4338,7 @@
+                     localizationItems.append(info)
+                 }
+             }
+-            for info in localizationListState.availableOfficialLocalizations {
++            for info in localizationListState.availableOfficialLocalizations where ["en", "ru"].contains(info.languageCode) {
+                 if existingIds.contains(info.languageCode) || info.languageCode == activeLanguageCode {
+                     continue
+                 }
+--- a/submodules/AuthorizationUI/Sources/AuthorizationSequenceSplashController.swift
++++ b/submodules/AuthorizationUI/Sources/AuthorizationSequenceSplashController.swift
+@@ -58,7 +58,7 @@
+                     }
+                 }
+                 
+-                if let available = localization.availableLocalizations.first, available.languageCode != "en" {
++                if let available = localization.availableLocalizations.first(where: { $0.languageCode == "ru" }) {
+                     let value = TGSuggestedLocalization(info: TGAvailableLocalization(title: available.title, localizedTitle: available.localizedTitle, code: available.languageCode), continueWithLanguageString: continueWithLanguageString, chooseLanguageString: "Choose Language", chooseLanguageOtherString: "Choose Language", englishLanguageNameString: "English")
+                     subscriber.putNext(value)
+                 }
+@@ -225,7 +225,7 @@
+         }
+         let suggestedCode = self.suggestedLocalization.get()
+         |> map { localization -> String? in
+-            return localization?.availableLocalizations.first?.languageCode
++            return localization?.availableLocalizations.first(where: { $0.languageCode == "ru" })?.languageCode
+         }
+         
+         let _ = (combineLatest(currentCode, suggestedCode)
