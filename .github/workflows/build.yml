@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: xcode-27
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,13 +24,14 @@ jobs:
           test -s NullGram.png
           cp NullGram.png Telegram/Telegram-iOS/Telegram.icon/Assets/NullGram.png
 
-      - name: Select installed Xcode 27
+      - name: Select Xcode 26.6 with iOS 26.5 SDK
         run: |
           set -euo pipefail
-          XCODE_PATH="$(find /Applications -maxdepth 1 -type d -name 'Xcode_27*.app' -print | sort -V | tail -n 1)"
-          if [ -z "$XCODE_PATH" ]; then echo "::error::Xcode 27 not found"; exit 1; fi
+          XCODE_PATH="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26.6*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$XCODE_PATH" ]; then echo "::error::Xcode 26.6 not found"; exit 1; fi
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
+          xcodebuild -showsdks | grep -F 'iOS 26.5'
 
       - name: Generate temporary provisioning profiles
         timeout-minutes: 10
@@ -63,39 +64,19 @@ jobs:
           test -s build-system/fake-codesigning/profiles/Intents.mobileprovision
           echo "Profiles copied and validated."
 
-      - name: Import and preflight signing identity
+      - name: Import temporary build identity
         timeout-minutes: 3
         run: |
           set -euo pipefail
-          echo "[1/4] Importing certificate into temporary keychain..."
           python3 -u build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
-          echo "[2/4] Comparing profile and certificate SHA1..."
           PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
           CERT_SHA1="$(openssl x509 -inform DER -in build-system/fake-codesigning/certs/Public.cer -noout -fingerprint -sha1 | sed 's/.*=//' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
           echo "Profile certificate SHA1: $PROFILE_SHA1"
-          echo "Public.cer SHA1: $CERT_SHA1"
-          if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Intents profile certificate does not match Public.cer"; exit 1; fi
-          echo "[3/4] Trusting certificate in temporary keychain (45-second limit)..."
-          python3 - <<'PY'
-          import subprocess, sys
-          command = ['security', 'add-trusted-cert', '-r', 'trustRoot', '-p', 'codeSign', '-k', 'temp.keychain', 'build-system/fake-codesigning/certs/Public.cer']
-          try:
-              result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=45)
-              print(result.stdout, end='', flush=True)
-              if result.returncode:
-                  print(f'::error::add-trusted-cert exited {result.returncode}', flush=True)
-                  sys.exit(result.returncode)
-          except subprocess.TimeoutExpired as error:
-              print(f'::error::add-trusted-cert timed out after {error.timeout}s; refusing to hang the job', flush=True)
-              sys.exit(124)
-          PY
-          echo "[4/4] Checking the codesigning identity..."
-          IDENTITY_OUTPUT="$(security find-identity -v -p codesigning temp.keychain)"
-          echo "$IDENTITY_OUTPUT"
-          if ! echo "$IDENTITY_OUTPUT" | grep -qi "$PROFILE_SHA1"; then echo "::error::No valid codesigning identity matches Intents.mobileprovision"; exit 1; fi
-          echo "Signing preflight passed."
+          echo "Build certificate SHA1: $CERT_SHA1"
+          if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Intents profile certificate does not match the temporary build certificate"; exit 1; fi
+          echo "Temporary build identity is ready; no personal signing key is used."
 
-      - name: Build unsigned IPA
+      - name: Build IPA for Sideloadly
         timeout-minutes: 300
         run: |
           set -euo pipefail
@@ -110,6 +91,26 @@ jobs:
           cp "$IPA_PATH" build/artifacts/NullGram.ipa
           test -s build/artifacts/NullGram.ipa
           echo "IPA created: $(du -h build/artifacts/NullGram.ipa | cut -f1)"
+
+      - name: Remove temporary signatures for Sideloadly
+        run: |
+          set -euo pipefail
+          WORK_DIR="$(mktemp -d)"
+          ditto -x -k build/artifacts/NullGram.ipa "$WORK_DIR"
+          test -d "$WORK_DIR/Payload"
+          while IFS= read -r -d '' code; do
+            codesign --remove-signature "$code" 2>/dev/null || true
+          done < <(find "$WORK_DIR/Payload" -depth \( -type d \( -name '*.app' -o -name '*.appex' -o -name '*.framework' -o -name '*.xpc' \) -o -type f -name '*.dylib' \) -print0)
+          find "$WORK_DIR/Payload" -type d -name _CodeSignature -prune -exec rm -rf {} +
+          find "$WORK_DIR/Payload" -type f -name embedded.mobileprovision -delete
+          rm -f build/artifacts/NullGram.ipa
+          (cd "$WORK_DIR" && zip -qry "$GITHUB_WORKSPACE/build/artifacts/NullGram.ipa" Payload)
+          test -s build/artifacts/NullGram.ipa
+          if find "$WORK_DIR/Payload" \( -type d -name _CodeSignature -o -type f -name embedded.mobileprovision \) -print -quit | grep -q .; then
+            echo "::error::Signature data remains in the Sideloadly IPA"
+            exit 1
+          fi
+          echo "Temporary signatures and provisioning profiles removed."
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
