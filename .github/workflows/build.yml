@@ -40,13 +40,14 @@ jobs:
             --codesigningInformationPath=build-system/fake-codesigning \
             --destination=build/renewed-profiles
           cp build/renewed-profiles/*.mobileprovision build-system/fake-codesigning/profiles/
-          # Profile generation changes the macOS keychain search list; reimport the build identity afterwards.
+          # Profile generation changes the macOS keychain search list; import and trust the matching self-signed test identity in the ephemeral runner keychain.
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          security add-trusted-cert -r trustRoot -p codeSign -k temp.keychain build-system/fake-codesigning/certs/Public.cer
           PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
-          IDENTITY_OUTPUT="$(security find-identity -v temp.keychain)"
+          IDENTITY_OUTPUT="$(security find-identity -v -p codesigning temp.keychain)"
           echo "$IDENTITY_OUTPUT"
           if ! echo "$IDENTITY_OUTPUT" | grep -qi "$PROFILE_SHA1"; then
-            echo "::error::The signing identity does not match Intents.mobileprovision; stopping before the long build."
+            echo "::error::No trusted signing identity matches Intents.mobileprovision; stopping before the long build."
             exit 1
           fi
           python3 -u build-system/Make/Make.py \
