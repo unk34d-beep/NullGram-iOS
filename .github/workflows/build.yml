@@ -34,13 +34,21 @@ jobs:
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
-          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
-          python3 -c 'from pathlib import Path; p=Path("build-system/Make/GenerateProfiles.py"); s=p.read_text(); n="    # Remove the DER-Encoded-Profile (signature)\n"; i="    import datetime\n    profile=plistlib.loads(open(parsed_plist_file, \"rb\").read())\n    profile[\"ExpirationDate\"]=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=3650)\n    with open(parsed_plist_file, \"wb\") as f: plistlib.dump(profile,f)\n\n"; assert s.count(n)==1; p.write_text(s.replace(n,i+n,1))'
+          python3 -c 'from pathlib import Path; p=Path("build-system/Make/GenerateProfiles.py"); s=p.read_text(); old="    # Remove the DER-Encoded-Profile (signature)"; nl=chr(10); insert=nl.join(["    import datetime", "    profile=plistlib.loads(open(parsed_plist_file, \"rb\").read())", "    profile[\"ExpirationDate\"]=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=3650)", "    with open(parsed_plist_file, \"wb\") as f: plistlib.dump(profile,f)", "", old]); assert s.count(old)==1; p.write_text(s.replace(old,insert,1))'
           python3 -u build-system/Make/Make.py generate-verification-profiles \
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
             --destination=build/renewed-profiles
           cp build/renewed-profiles/*.mobileprovision build-system/fake-codesigning/profiles/
+          # Profile generation changes the macOS keychain search list; reimport the build identity afterwards.
+          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
+          IDENTITY_OUTPUT="$(security find-identity -v temp.keychain)"
+          echo "$IDENTITY_OUTPUT"
+          if ! echo "$IDENTITY_OUTPUT" | grep -qi "$PROFILE_SHA1"; then
+            echo "::error::The signing identity does not match Intents.mobileprovision; stopping before the long build."
+            exit 1
+          fi
           python3 -u build-system/Make/Make.py \
             --overrideXcodeVersion \
             --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
