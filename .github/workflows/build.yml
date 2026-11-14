@@ -25,24 +25,34 @@ jobs:
           sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
 
-      - name: Build unsigned IPA
+      - name: Renew temporary profiles and build unsigned IPA
         run: |
           set -euo pipefail
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-          path = Path("Telegram/BUILD")
-          source = path.read_text()
-          updated, count = re.subn(r'provisioning_profile\s*=\s*select\(\{\n.*?\n    \}\),', 'provisioning_profile = None,', source, flags=re.S)
-          if count != 9:
-              raise SystemExit(f"Expected 9 test provisioning profiles, found {count}")
-          path.write_text(updated)
-          print(f"Removed {count} expired test provisioning profile references")
-          PY
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("build-system/Make/GenerateProfiles.py")
+          source = path.read_text()
+          needle = "    # Remove the DER-Encoded-Profile (signature)\n"
+          insertion = '''    import datetime
+    profile = plistlib.loads(open(parsed_plist_file, "rb").read())
+    profile["ExpirationDate"] = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=3650)
+    with open(parsed_plist_file, "wb") as file:
+        plistlib.dump(profile, file)
+
+'''
+          if source.count(needle) != 1:
+              raise SystemExit("Could not safely locate profile signing step")
+          path.write_text(source.replace(needle, insertion + needle, 1))
+          PY
+          python3 -u build-system/Make/Make.py generate-verification-profiles \
+            --configurationPath="build-system/appstore-configuration.json" \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --destination=build/renewed-profiles
+          cp build/renewed-profiles/*.mobileprovision build-system/fake-codesigning/profiles/
           python3 -u build-system/Make/Make.py \
             --overrideXcodeVersion \
             --bazelUserRoot="/private/var/tmp/_bazel_containerhost" \
