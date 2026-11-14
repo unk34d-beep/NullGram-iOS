@@ -18,7 +18,8 @@ jobs:
       - name: Apply NullGram customization
         run: |
           git apply NullGram-iOS.patch
-          sed -i '' 's/"image-name" : "NullGram.png"/"image-name" : "NullGram"/' Telegram/Telegram-iOS/Telegram.icon/icon.json
+          mkdir -p Telegram/Telegram-iOS/Telegram.icon/Assets
+          cp NullGram.png Telegram/Telegram-iOS/Telegram.icon/Assets/NullGram.png
 
       - name: Select installed Xcode 27
         run: |
