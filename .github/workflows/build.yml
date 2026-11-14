@@ -32,22 +32,7 @@ jobs:
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("build-system/Make/GenerateProfiles.py")
-          source = path.read_text()
-          needle = "    # Remove the DER-Encoded-Profile (signature)\n"
-          insertion = '''    import datetime
-    profile = plistlib.loads(open(parsed_plist_file, "rb").read())
-    profile["ExpirationDate"] = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=3650)
-    with open(parsed_plist_file, "wb") as file:
-        plistlib.dump(profile, file)
-
-'''
-          if source.count(needle) != 1:
-              raise SystemExit("Could not safely locate profile signing step")
-          path.write_text(source.replace(needle, insertion + needle, 1))
-          PY
+          python3 -c 'from pathlib import Path; p=Path("build-system/Make/GenerateProfiles.py"); s=p.read_text(); n="    # Remove the DER-Encoded-Profile (signature)\n"; i="    import datetime\n    profile=plistlib.loads(open(parsed_plist_file, \"rb\").read())\n    profile[\"ExpirationDate\"]=datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)+datetime.timedelta(days=3650)\n    with open(parsed_plist_file, \"wb\") as f: plistlib.dump(profile,f)\n\n"; assert s.count(n)==1; p.write_text(s.replace(n,i+n,1))'
           python3 -u build-system/Make/Make.py generate-verification-profiles \
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
