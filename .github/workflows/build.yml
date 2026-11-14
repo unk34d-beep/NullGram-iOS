@@ -40,17 +40,17 @@ jobs:
           from pathlib import Path
           path = Path('build-system/Make/GenerateProfiles.py')
           source = path.read_text()
-          needle = '    # Remove the DER-Encoded-Profile (signature)'
-          replacement = chr(10).join([
-              '    import datetime',
-              '    profile = plistlib.loads(open(parsed_plist_file, 'rb').read())',
-              '    profile['ExpirationDate'] = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=3650)',
-              '    with open(parsed_plist_file, 'wb') as stream: plistlib.dump(profile, stream)',
+          needle = "    # Remove the DER-Encoded-Profile (signature)"
+          new_lines = [
+              "    import datetime",
+              "    profile = plistlib.loads(open(parsed_plist_file, 'rb').read())",
+              "    profile['ExpirationDate'] = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=3650)",
+              "    with open(parsed_plist_file, 'wb') as stream: plistlib.dump(profile, stream)",
               needle,
-          ])
+          ]
           if source.count(needle) != 1:
               raise SystemExit(f'Expected one profile signature marker, got {source.count(needle)}')
-          path.write_text(source.replace(needle, replacement, 1))
+          path.write_text(source.replace(needle, chr(10).join(new_lines), 1))
           print('Applied temporary profile expiration adjustment.', flush=True)
           PY
           mkdir -p build/renewed-profiles
@@ -75,7 +75,7 @@ jobs:
           echo "Profile certificate SHA1: $PROFILE_SHA1"
           echo "Public.cer SHA1: $CERT_SHA1"
           if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Intents profile certificate does not match Public.cer"; exit 1; fi
-          echo "[3/4] Trusting certificate in the temporary keychain (45-second limit)..."
+          echo "[3/4] Trusting certificate in temporary keychain (45-second limit)..."
           python3 - <<'PY'
           import subprocess, sys
           command = ['security', 'add-trusted-cert', '-r', 'trustRoot', '-p', 'codeSign', '-k', 'temp.keychain', 'build-system/fake-codesigning/certs/Public.cer']
