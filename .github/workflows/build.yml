@@ -61,8 +61,60 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+
+  verify_customization_patches:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Apply NullGram patches and provided icon
+        run: |
+          set -euo pipefail
+          git apply --check NullGram-iOS.patch
+          git apply NullGram-iOS.patch
+          git apply --check --ignore-whitespace NullGram-iOS-fixes.patch
+          git apply --ignore-whitespace NullGram-iOS-fixes.patch
+          mkdir -p Telegram/Telegram-iOS/Telegram.icon/Assets
+          test -s NullGram.png
+          cp NullGram.png Telegram/Telegram-iOS/Telegram.icon/Assets/NullGram.png
+          mkdir -p submodules/RMIntro/Sources/platform/ios/Resources
+          cp NullGram.png submodules/RMIntro/Sources/platform/ios/Resources/NullGram.png
+
+      - name: Preflight onboarding and home search source patches
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import textwrap
+
+          workflow = Path(".github/workflows/build.yml").read_text()
+          build_section = workflow[workflow.index("\n  build:\n"):]
+
+          def extract_python_step(step_name):
+              start = build_section.index("      - name: " + step_name)
+              next_step = build_section.find("\n      - name: ", start + 1)
+              if next_step < 0:
+                  next_step = len(build_section)
+              body = build_section[start:next_step]
+              marker = "python3 - <<'PY'\n"
+              script_start = body.index(marker) + len(marker)
+              script_end = body.index("\n          PY", script_start)
+              script = textwrap.dedent(body[script_start:script_end])
+              subprocess.run([sys.executable, "-c", script], check=True)
+
+          extract_python_step("Apply NullGram onboarding, login, stars and app-name text")
+          extract_python_step("Move root chat search to a floating button")
+          print("All customization anchors matched and patch scripts completed.", flush=True)
+          PY
+
+
   build:
-    needs: [verify_share_screen_onone, verify_ipa_postprocessing]
+    needs: [verify_share_screen_onone, verify_ipa_postprocessing, verify_customization_patches]
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
