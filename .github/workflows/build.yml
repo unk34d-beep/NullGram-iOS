@@ -289,6 +289,74 @@ jobs:
           print(f"Set NullGram display name in {found} localized InfoPlist.strings entries.", flush=True)
           PY
 
+      - name: Move root chat search to a floating button
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_text, old, new, label):
+              path = Path(path_text)
+              source = path.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one anchor in {path}, found {count}")
+              path.write_text(source.replace(old, new, 1))
+              print(f"Patched {label}: {path}", flush=True)
+
+          header = "submodules/TelegramUI/Components/ChatListHeaderComponent/Sources/ChatListNavigationBar.swift"
+          node = "submodules/ChatListUI/Sources/ChatListControllerNode.swift"
+          replace_once(header,
+              "        public var isEnabled: Bool\n",
+              "        public var isEnabled: Bool\n        public var isHidden: Bool\n",
+              "search visibility property")
+          replace_once(header,
+              "public init(isEnabled: Bool, placeholder: String? = nil, displayGlassBackgroundWhenInactive: Bool = false, alignPlaceholderToLeftWhenInactive: Bool = false) {\n            self.isEnabled = isEnabled\n",
+              "public init(isEnabled: Bool, placeholder: String? = nil, displayGlassBackgroundWhenInactive: Bool = false, alignPlaceholderToLeftWhenInactive: Bool = false, isHidden: Bool = false) {\n            self.isEnabled = isEnabled\n            self.isHidden = isHidden\n",
+              "search visibility initializer")
+          replace_once(header,
+              "                embeddedSearchBarExpansionHeight = 60.0 - floorToScreenPixels((1.0 - searchOffsetFraction) * searchSize.height)",
+              "                let searchIsHidden = search.isHidden && component.activeSearch == nil\n                embeddedSearchBarExpansionHeight = searchIsHidden ? 0.0 : 60.0 - floorToScreenPixels((1.0 - searchOffsetFraction) * searchSize.height)",
+              "hidden search row height")
+          replace_once(header,
+              "                var searchAlpha: CGFloat = search.isEnabled ? 1.0 : 0.5",
+              "                var searchAlpha: CGFloat = searchIsHidden ? 0.0 : (search.isEnabled ? 1.0 : 0.5)",
+              "hidden search row visibility")
+          replace_once(header,
+              "                searchContentNode.isUserInteractionEnabled = search.isEnabled",
+              "                searchContentNode.isUserInteractionEnabled = search.isEnabled && !searchIsHidden",
+              "hidden search row interaction")
+          replace_once(node,
+              "    let navigationBarView = ComponentView<Empty>()\n",
+              "    let navigationBarView = ComponentView<Empty>()\n    private let floatingSearchButton = UIButton(type: .system)\n",
+              "floating search button property")
+          replace_once(node,
+              "        self.setViewBlock({\n            return UITracingLayerView()\n        })\n",
+              "        self.setViewBlock({\n            return UITracingLayerView()\n        })\n        self.floatingSearchButton.setImage(UIImage(bundleImageName: \\"Chat List/SearchIcon\\"), for: .normal)\n        self.floatingSearchButton.tintColor = presentationData.theme.rootController.navigationSearchBar.inputIconColor\n        self.floatingSearchButton.backgroundColor = presentationData.theme.rootController.navigationSearchBar.inputIconColor.withAlphaComponent(0.14)\n        self.floatingSearchButton.layer.cornerRadius = 28.0\n        self.floatingSearchButton.accessibilityLabel = presentationData.strings.Common_Search\n        self.floatingSearchButton.addTarget(self, action: #selector(self.floatingSearchButtonPressed), for: .touchUpInside)\n        self.view.addSubview(self.floatingSearchButton)\n",
+              "floating search button setup")
+          replace_once(node,
+              "    func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, visualNavigationHeight: CGFloat, cleanNavigationBarHeight: CGFloat, storiesInset: CGFloat, transition: ContainedViewLayoutTransition) {\n",
+              "    @objc private func floatingSearchButtonPressed() {\n        self.controller?.activateSearch()\n    }\n\n    func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, visualNavigationHeight: CGFloat, cleanNavigationBarHeight: CGFloat, storiesInset: CGFloat, transition: ContainedViewLayoutTransition) {\n",
+              "floating search button action")
+          replace_once(node,
+              "        self.mainContainerNode.initialScrollingOffset = ((self.controller?.isSideList ?? false) ? 0.0 : ChatListNavigationBar.searchScrollHeight) + navigationBarLayout.storiesInset\n",
+              "        self.mainContainerNode.initialScrollingOffset = ((self.controller?.isSideList ?? false) ? 0.0 : (self.controller?.location == .chatList(groupId: .root) ? 0.0 : ChatListNavigationBar.searchScrollHeight)) + navigationBarLayout.storiesInset\n        let isRootChatList: Bool\n        if case .chatList(groupId: .root) = self.location {\n            isRootChatList = true\n        } else {\n            isRootChatList = false\n        }\n        self.floatingSearchButton.isHidden = !isRootChatList || self.controller?.isSideList == true || self.isSearchDisplayControllerActive != nil || self.isEditing\n        let bottomInset = max(layout.safeInsets.bottom, layout.insets(options: []).bottom)\n        self.floatingSearchButton.frame = CGRect(x: layout.safeInsets.left + 16.0, y: layout.size.height - bottomInset - 72.0, width: 56.0, height: 56.0)\n        self.view.bringSubviewToFront(self.floatingSearchButton)\n",
+              "root search button layout")
+          replace_once(node,
+              "                search: ChatListNavigationBar.Search(isEnabled: true),",
+              "                search: ChatListNavigationBar.Search(isEnabled: true, isHidden: self.controller?.location == .chatList(groupId: .root) && self.isSearchDisplayControllerActive == nil),",
+              "hide root header search")
+          replace_once("submodules/ChatListUI/Sources/ChatListContainerItemNode.swift",
+              "            self.listNode.scrollHeightTopInset = ChatListNavigationBar.searchScrollHeight + ChatListNavigationBar.storiesScrollHeight",
+              "            self.listNode.scrollHeightTopInset = ChatListNavigationBar.storiesScrollHeight",
+              "remove header search scroll space")
+          replace_once("submodules/ChatListUI/Sources/ChatListController.swift",
+              "                    self.primaryContext?.searchButton = NavigationBarComponent.Button(id: \\"search\\",\n                        content: .icon(imageName: \\"Chat List/SearchIcon\\"),\n                        action: { [weak self] _ in\n                            self?.activateSearch()\n                        },\n                        accessibilityLabel: self.presentationData.strings.Common_Search\n                    )\n\n",
+              "",
+              "remove top-right search button")
+          PY
+
+
       - name: Remove iOS 27.1-only UIKit APIs
         run: |
           set -euo pipefail
