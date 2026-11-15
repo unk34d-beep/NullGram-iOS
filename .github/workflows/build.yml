@@ -128,7 +128,7 @@ jobs:
               : [
                   "Unofficial Telegram client by @TheNullV4",
                   "All unnecessary features that drain your phone have been removed",
-                  "Unlike \"Veronica\", we won't ask you to sign out of iCloud to install NullGram",
+                  "Unlike “Veronica”, we won't ask you to sign out of iCloud to install NullGram",
                   "You don't pay for space on Telegram's servers (unlike your iCloud+)",
                   "We can't see your chats, because you connect through the Telegram API",
                   "Your chats and everything else are stored there"
@@ -234,14 +234,290 @@ jobs:
               expected=2)
 
           code_controller = "submodules/AuthorizationUI/Sources/AuthorizationSequenceCodeEntryController.swift"
-          replace_exact(code_controller,
-              """text = presentationData.strings.Login_CancelPhoneVerification
-                  proceed = presentationData.strings.Login_CancelPhoneVerificationContinue
-                  stop = presentationData.strings.Login_CancelPhoneVerificationStop""",
-              """let isRussian = presentationData.strings.baseLanguageCode.hasPrefix("ru")
-                  text = isRussian ? "Вы хотите прервать вход в аккаунт?" : "Do you want to cancel signing in?"
-                  proceed = isRussian ? "Нет" : "No"
-                  stop = isRussian ? "Да" : "Yes" """)
+          code_controller_path = Path("submodules/AuthorizationUI/Sources/AuthorizationSequenceCodeEntryController.swift")
+          source = code_controller_path.read_text()
+          pattern = re.compile(
+              r'(?m)^(?P<indent>[ \\t]*)text = presentationData\\.strings\\.Login_CancelPhoneVerification\\n(?P=indent)proceed = presentationData\\.strings\\.Login_CancelPhoneVerificationContinue\\n(?P=indent)stop = presentationData\\.strings\\.Login_CancelPhoneVerificationStop
+          replace_exact(
+              "submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift",
+              "presentationData.strings.Gift_Store_Balance_MyStars",
+              'presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Звёзды" : "Stars",
+          )
+
+          # The only localized display-name overrides in InfoPlist.strings must agree with the bundle name.
+          name_files = list(Path("Telegram/Telegram-iOS").glob("*.lproj/InfoPlist.strings"))
+          found = 0
+          for path in name_files:
+              source = path.read_text()
+              updated, count = re.subn(r'(?m)^("CFBundleDisplayName"\s*=\s*)"[^"]*";', r'\1"NullGram";', source)
+              found += count
+              path.write_text(updated)
+          if found < 1:
+              raise SystemExit("No localized CFBundleDisplayName entries found")
+          for path in name_files:
+              if re.search(r'(?m)^"CFBundleDisplayName"\s*=\s*"(?!NullGram")[^"]*";', path.read_text()):
+                  raise SystemExit(f"Unexpected localized app name remains in {path}")
+          print(f"Set NullGram display name in {found} localized InfoPlist.strings entries.", flush=True)
+          PY
+
+      - name: Remove iOS 27.1-only UIKit APIs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          pattern = re.compile(r'(?m)^[ \t]*if #available\(iOS 27\.1, \*\) \{\n[ \t]*return [^\n]*reservedRegions[^\n]*\n[ \t]*\}\n')
+          files = [
+              Path("submodules/Display/Source/ReservedArea.swift"),
+              Path("submodules/Display/Source/WindowContent.swift"),
+          ]
+          for path in files:
+              source = path.read_text()
+              updated, count = pattern.subn("", source)
+              if count != 1:
+                  raise SystemExit(f"Expected one iOS 27.1 reservedRegions block in {path}, got {count}")
+              if "reservedRegions(" in updated:
+                  raise SystemExit(f"Unsupported reservedRegions call remains in {path}")
+              path.write_text(updated)
+              print(f"Removed unsupported iOS 27.1 UIKit call from {path}", flush=True)
+          PY
+
+      - name: Disable CloudKit data context
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("submodules/TelegramCore/Sources/Network/Network.swift")
+          source = path.read_text()
+          pattern = re.compile(
+              r'(func makeCloudDataContext\(encryptionProvider: EncryptionProvider\) -> CloudDataContext\? \{)\n.*?\n\}',
+              re.S,
+          )
+          updated, count = pattern.subn(r'\1\n    return nil\n}', source, count=1)
+          if count != 1:
+              raise SystemExit(f"Expected one makeCloudDataContext function, found {count}")
+          function_body = updated.split("func makeCloudDataContext", 1)[1].split("\n}", 1)[0]
+          if "CloudDataContextImpl(encryptionProvider" in function_body:
+              raise SystemExit("CloudDataContextImpl construction remains after patch")
+          path.write_text(updated)
+          print("CloudKit data context disabled.", flush=True)
+          PY
+
+      - name: Stub Siri authorization (no Siri entitlement)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path("submodules/TelegramUI/Sources/AppDelegate.swift")
+          source = path.read_text()
+          if "enum NullINPreferences" in source:
+              raise SystemExit("Siri authorization stub is already present")
+          updated, count = re.subn(r'\bINPreferences\.', 'NullINPreferences.', source)
+          if count < 1:
+              raise SystemExit("INPreferences not found")
+          shim = '''
+
+          enum NullINPreferences {
+              static func siriAuthorizationStatus() -> INSiriAuthorizationStatus { return .denied }
+              static func requestSiriAuthorization(_ handler: @escaping (INSiriAuthorizationStatus) -> Void) { handler(.denied) }
+          }
+          '''
+          path.write_text(updated + shim)
+          print(f"Siri authorization stubbed ({count} call sites)", flush=True)
+          PY
+
+      - name: Fall back when App Group entitlement is unavailable
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("submodules/TelegramUI/Sources/AppDelegate.swift")
+          source = path.read_text()
+
+          replacements = [
+              (
+                  '    private var urlSessions: [URLSession] = []\n',
+                  '    private var hasSharedAppGroupContainer = false\n    private var urlSessions: [URLSession] = []\n',
+                  "URLSession state property",
+              ),
+              (
+                  '        configuration.sharedContainerIdentifier = appGroupName\n',
+                  '        if self.hasSharedAppGroupContainer {\n            configuration.sharedContainerIdentifier = appGroupName\n        }\n',
+                  "background URLSession shared container",
+              ),
+              (
+                  '        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)\n',
+                  '''        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
+                  self.hasSharedAppGroupContainer = maybeAppGroupUrl != nil
+                  let appGroupUrl: URL
+                  if let maybeAppGroupUrl {
+                      appGroupUrl = maybeAppGroupUrl
+                  } else {
+                      let fallbackUrl = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NullGram", isDirectory: true)
+                      do {
+                          try FileManager.default.createDirectory(at: fallbackUrl, withIntermediateDirectories: true)
+                          appGroupUrl = fallbackUrl
+                      } catch {
+                          NSLog("Failed to create local app data directory: %@", String(describing: error))
+                          self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Unable to create local app data directory.", preferredStyle: .alert))
+                          return true
+                      }
+                  }
+          ''',
+                  "app-group storage fallback",
+              ),
+              (
+                  '''        guard let appGroupUrl = maybeAppGroupUrl else {
+                      self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
+                      return true
+                  }
+          ''',
+                  "",
+                  "blocking App Group guard",
+              ),
+          ]
+
+          for old, new, label in replacements:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one {label} target in {path}, found {count}")
+              source = source.replace(old, new, 1)
+
+          path.write_text(source)
+          print("App Group fallback applied; local storage will be used when the entitlement is missing.", flush=True)
+          PY
+
+      - name: Set ShareScreen to -Onone
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("submodules/TelegramUI/Components/ShareScreen/BUILD")
+          source = path.read_text()
+          old = '    copts = [\n        "-warnings-as-errors",\n    ],'
+          new = '    copts = [\n        "-warnings-as-errors",\n        "-Onone",\n    ],'
+          if source.count(old) != 1:
+              raise SystemExit(f"Expected one ShareScreen copts block, got {source.count(old)}")
+          path.write_text(source.replace(old, new, 1))
+          print("Disabled CopyPropagation for ShareScreen only", flush=True)
+          PY
+
+      - name: Select Xcode 26.6 with iOS 26.5 SDK
+        run: |
+          set -euo pipefail
+          XCODE_PATH="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26.6*.app' -print | sort -V | tail -n 1)"
+          if [ -z "$XCODE_PATH" ]; then echo "::error::Xcode 26.6 not found"; exit 1; fi
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -F 'iOS 26.5'
+
+      - name: Generate temporary provisioning profiles
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('build-system/Make/GenerateProfiles.py')
+          source = path.read_text()
+          needle = "    # Remove the DER-Encoded-Profile (signature)"
+          new_lines = [
+              "    import datetime",
+              "    profile = plistlib.loads(open(parsed_plist_file, 'rb').read())",
+              "    profile['ExpirationDate'] = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) + datetime.timedelta(days=3650)",
+              "    with open(parsed_plist_file, 'wb') as stream: plistlib.dump(profile, stream)",
+              needle,
+          ]
+          if source.count(needle) != 1:
+              raise SystemExit(f'Expected one profile signature marker, got {source.count(needle)}')
+          path.write_text(source.replace(needle, chr(10).join(new_lines), 1))
+          print('Applied temporary profile expiration adjustment.', flush=True)
+          PY
+          mkdir -p build/renewed-profiles
+          echo "Generating profiles..."
+          python3 -u build-system/Make/Make.py generate-verification-profiles --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --destination=build/renewed-profiles
+          PROFILE_COUNT="$(find build/renewed-profiles -maxdepth 1 -name '*.mobileprovision' -type f | wc -l | tr -d ' ')"
+          echo "Generated profile count: $PROFILE_COUNT"
+          test "$PROFILE_COUNT" -eq 9
+          cp build/renewed-profiles/*.mobileprovision build-system/fake-codesigning/profiles/
+          test -s build-system/fake-codesigning/profiles/Intents.mobileprovision
+          echo "Profiles copied and validated."
+
+      - name: Import temporary build identity
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          python3 -u build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          PROFILE_SHA1="$(security cms -D -i build-system/fake-codesigning/profiles/Intents.mobileprovision | plutil -extract DeveloperCertificates.0 raw -o - - | base64 -D | shasum -a 1 | awk '{print toupper($1)}')"
+          CERT_SHA1="$(openssl x509 -inform DER -in build-system/fake-codesigning/certs/Public.cer -noout -fingerprint -sha1 | sed 's/.*=//' | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          echo "Profile certificate SHA1: $PROFILE_SHA1"
+          echo "Build certificate SHA1: $CERT_SHA1"
+          if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Intents profile certificate does not match the temporary build certificate"; exit 1; fi
+          echo "Temporary build identity is ready; no personal signing key is used."
+
+      - name: Restore Bazel disk cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/bazel-disk-cache
+          key: bazel-${{ runner.os }}-xcode26.6-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bazel-${{ runner.os }}-xcode26.6-
+
+      - name: Build IPA for Sideloadly
+        timeout-minutes: 300
+        run: |
+          set -euo pipefail
+          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
+          COMMIT_COUNT="$(git rev-list --count HEAD)"
+          BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
+          echo "Starting Bazel build; build number $BUILD_NUMBER"
+          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" --cacheDir="$RUNNER_TEMP/bazel-disk-cache" build --continueOnError --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
+          mkdir -p build/artifacts
+          IPA_PATH="bazel-bin/Telegram/Telegram.ipa"
+          if [ ! -s "$IPA_PATH" ]; then echo "::error::Expected IPA is missing or empty: $IPA_PATH"; exit 1; fi
+          cp "$IPA_PATH" build/artifacts/NullGram.ipa
+          test -s build/artifacts/NullGram.ipa
+          echo "IPA created: $(du -h build/artifacts/NullGram.ipa | cut -f1)"
+
+      - name: Save Bazel disk cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bazel-disk-cache
+          key: bazel-${{ runner.os }}-xcode26.6-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Remove temporary signatures for Sideloadly
+        run: |
+          set -euo pipefail
+          bash build-system/Make/PrepareUnsignedIPA.sh build/artifacts/NullGram.ipa build/artifacts/NullGram.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NullGram-unsigned-IPA
+          path: build/artifacts/NullGram.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+          )
+          def replace_cancel_confirmation(match):
+              indent = match.group("indent")
+              return "\\n".join([
+                  indent + 'let isRussian = presentationData.strings.baseLanguageCode.hasPrefix("ru")',
+                  indent + 'text = isRussian ? "Вы хотите прервать вход в аккаунт?" : "Do you want to cancel signing in?"',
+                  indent + 'proceed = isRussian ? "Нет" : "No"',
+                  indent + 'stop = isRussian ? "Да" : "Yes"',
+              ])
+          source, count = pattern.subn(replace_cancel_confirmation, source, count=1)
+          if count != 1:
+              raise SystemExit(f"Expected one phone verification cancellation block, found {count}")
+          code_controller_path.write_text(source)
+          print("Patched phone sign-in cancellation confirmation.", flush=True)
           replace_exact(
               "submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift",
               "presentationData.strings.Gift_Store_Balance_MyStars",
