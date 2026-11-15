@@ -172,7 +172,7 @@ jobs:
           telegram_build.write_text(source.replace(marker, marker + '\n        "//submodules/RMIntro:NullGramLogo",', 1))
           controller = Path("submodules/RMIntro/Sources/platform/ios/RMIntroViewController.m")
           source = controller.read_text()
-          marker = "        self.view addSubview:_glkView;\n"
+          marker = "        [self.view addSubview:_glkView];\n"
           if source.count(marker) != 1 or "UIImageView *nullGramLogoView" in source:
               raise SystemExit("RMIntro logo insertion anchor missing or already patched")
           source = source.replace(marker, marker + """        UIImage *nullGramLogo = [UIImage imageNamed:@"NullGram"];
