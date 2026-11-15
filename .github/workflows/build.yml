@@ -255,7 +255,7 @@ jobs:
           replace_exact(
               "submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift",
               "presentationData.strings.Gift_Store_Balance_MyStars",
-              'presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Звёзды" : "Stars",
+              'presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Звёзды" : "Stars"',
           )
 
           # The only localized display-name overrides in InfoPlist.strings must agree with the bundle name.
