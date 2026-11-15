@@ -20,8 +20,42 @@ jobs:
           xcrun swiftc -Onone "$RUNNER_TEMP/flag-check.swift" -o "$RUNNER_TEMP/flag-check"
           "$RUNNER_TEMP/flag-check"
 
+  verify_ipa_postprocessing:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create a fake IPA fixture
+        run: |
+          set -euo pipefail
+          FIXTURE_ROOT="$RUNNER_TEMP/ipa-fixture"
+          mkdir -p "$FIXTURE_ROOT/Payload/Test.app/_CodeSignature"
+          printf 'fixture executable\n' > "$FIXTURE_ROOT/Payload/Test.app/Test"
+          printf 'fixture signature\n' > "$FIXTURE_ROOT/Payload/Test.app/_CodeSignature/CodeResources"
+          printf 'fixture profile\n' > "$FIXTURE_ROOT/Payload/Test.app/embedded.mobileprovision"
+          (cd "$FIXTURE_ROOT" && zip -qry "$RUNNER_TEMP/fixture.ipa" Payload)
+          test -s "$RUNNER_TEMP/fixture.ipa"
+
+      - name: Strip and validate fake IPA
+        run: |
+          set -euo pipefail
+          bash build-system/Make/PrepareUnsignedIPA.sh "$RUNNER_TEMP/fixture.ipa" "$RUNNER_TEMP/output/NullGram.ipa"
+          unzip -Z1 "$RUNNER_TEMP/output/NullGram.ipa" | grep -F 'Payload/Test.app/Test'
+          if unzip -Z1 "$RUNNER_TEMP/output/NullGram.ipa" | grep -E '(_CodeSignature|embedded\.mobileprovision)'; then
+            echo "::error::Signature data remains in fixture IPA"
+            exit 1
+          fi
+
+      - name: Test IPA artifact upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: IPA-postprocessing-smoke-fixture
+          path: ${{ runner.temp }}/output/NullGram.ipa
+          if-no-files-found: error
+          retention-days: 1
+
   build:
-    needs: verify_share_screen_onone
+    needs: [verify_share_screen_onone, verify_ipa_postprocessing]
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +165,14 @@ jobs:
           if [ "$PROFILE_SHA1" != "$CERT_SHA1" ]; then echo "::error::Intents profile certificate does not match the temporary build certificate"; exit 1; fi
           echo "Temporary build identity is ready; no personal signing key is used."
 
+      - name: Restore Bazel disk cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/bazel-disk-cache
+          key: bazel-${{ runner.os }}-xcode26.6-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bazel-${{ runner.os }}-xcode26.6-
+
       - name: Build IPA for Sideloadly
         timeout-minutes: 300
         run: |
@@ -139,33 +181,25 @@ jobs:
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
           echo "Starting Bazel build; build number $BUILD_NUMBER"
-          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" build --continueOnError --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
+          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" build --continueOnError --disk_cache="$RUNNER_TEMP/bazel-disk-cache" --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
           mkdir -p build/artifacts
-          IPA_PATH="$(find bazel-out -path '*/bin/Telegram/*.ipa' -print -quit)"
-          if [ -z "$IPA_PATH" ]; then echo "::error::IPA output not found"; exit 1; fi
+          IPA_PATH="bazel-bin/Telegram/Telegram.ipa"
+          if [ ! -s "$IPA_PATH" ]; then echo "::error::Expected IPA is missing or empty: $IPA_PATH"; exit 1; fi
           cp "$IPA_PATH" build/artifacts/NullGram.ipa
           test -s build/artifacts/NullGram.ipa
           echo "IPA created: $(du -h build/artifacts/NullGram.ipa | cut -f1)"
 
+      - name: Save Bazel disk cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bazel-disk-cache
+          key: bazel-${{ runner.os }}-xcode26.6-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Remove temporary signatures for Sideloadly
         run: |
           set -euo pipefail
-          WORK_DIR="$(mktemp -d)"
-          ditto -x -k build/artifacts/NullGram.ipa "$WORK_DIR"
-          test -d "$WORK_DIR/Payload"
-          while IFS= read -r -d '' code; do
-            codesign --remove-signature "$code" 2>/dev/null || true
-          done < <(find "$WORK_DIR/Payload" -depth \( -type d \( -name '*.app' -o -name '*.appex' -o -name '*.framework' -o -name '*.xpc' \) -o -type f -name '*.dylib' \) -print0)
-          find "$WORK_DIR/Payload" -type d -name _CodeSignature -prune -exec rm -rf {} +
-          find "$WORK_DIR/Payload" -type f -name embedded.mobileprovision -delete
-          rm -f build/artifacts/NullGram.ipa
-          (cd "$WORK_DIR" && zip -qry "$GITHUB_WORKSPACE/build/artifacts/NullGram.ipa" Payload)
-          test -s build/artifacts/NullGram.ipa
-          if find "$WORK_DIR/Payload" \( -type d -name _CodeSignature -o -type f -name embedded.mobileprovision \) -print -quit | grep -q .; then
-            echo "::error::Signature data remains in the Sideloadly IPA"
-            exit 1
-          fi
-          echo "Temporary signatures and provisioning profiles removed."
+          bash build-system/Make/PrepareUnsignedIPA.sh build/artifacts/NullGram.ipa build/artifacts/NullGram.ipa
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
