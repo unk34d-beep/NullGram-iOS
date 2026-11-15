@@ -4,10 +4,11 @@ set -euo pipefail
 INPUT_IPA="${1:?Usage: PrepareUnsignedIPA.sh input.ipa output.ipa}"
 OUTPUT_IPA="${2:?Usage: PrepareUnsignedIPA.sh input.ipa output.ipa}"
 OUTPUT_DIR="$(dirname "$OUTPUT_IPA")"
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_IPA="$(cd "$OUTPUT_DIR" && pwd)/$(basename "$OUTPUT_IPA")"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-mkdir -p "$OUTPUT_DIR"
 ditto -x -k "$INPUT_IPA" "$WORK_DIR"
 test -d "$WORK_DIR/Payload"
 
