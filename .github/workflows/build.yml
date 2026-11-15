@@ -332,7 +332,7 @@ jobs:
               "floating search button property")
           replace_once(node,
               "        self.setViewBlock({\n            return UITracingLayerView()\n        })\n",
-              "        self.setViewBlock({\n            return UITracingLayerView()\n        })\n        self.floatingSearchButton.setImage(UIImage(bundleImageName: \\"Chat List/SearchIcon\\"), for: .normal)\n        self.floatingSearchButton.tintColor = presentationData.theme.rootController.navigationSearchBar.inputIconColor\n        self.floatingSearchButton.backgroundColor = presentationData.theme.rootController.navigationSearchBar.inputIconColor.withAlphaComponent(0.14)\n        self.floatingSearchButton.layer.cornerRadius = 28.0\n        self.floatingSearchButton.accessibilityLabel = presentationData.strings.Common_Search\n        self.floatingSearchButton.addTarget(self, action: #selector(self.floatingSearchButtonPressed), for: .touchUpInside)\n        self.view.addSubview(self.floatingSearchButton)\n",
+              "        self.setViewBlock({\n            return UITracingLayerView()\n        })\n        self.floatingSearchButton.setImage(UIImage(bundleImageName: \"Chat List/SearchIcon\"), for: .normal)\n        self.floatingSearchButton.tintColor = presentationData.theme.rootController.navigationSearchBar.inputIconColor\n        self.floatingSearchButton.backgroundColor = presentationData.theme.rootController.navigationSearchBar.inputIconColor.withAlphaComponent(0.14)\n        self.floatingSearchButton.layer.cornerRadius = 28.0\n        self.floatingSearchButton.accessibilityLabel = presentationData.strings.Common_Search\n        self.floatingSearchButton.addTarget(self, action: #selector(self.floatingSearchButtonPressed), for: .touchUpInside)\n        self.view.addSubview(self.floatingSearchButton)\n",
               "floating search button setup")
           replace_once(node,
               "    func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, visualNavigationHeight: CGFloat, cleanNavigationBarHeight: CGFloat, storiesInset: CGFloat, transition: ContainedViewLayoutTransition) {\n",
@@ -351,7 +351,7 @@ jobs:
               "            self.listNode.scrollHeightTopInset = ChatListNavigationBar.storiesScrollHeight",
               "remove header search scroll space")
           replace_once("submodules/ChatListUI/Sources/ChatListController.swift",
-              "                    self.primaryContext?.searchButton = NavigationBarComponent.Button(id: \\"search\\",\n                        content: .icon(imageName: \\"Chat List/SearchIcon\\"),\n                        action: { [weak self] _ in\n                            self?.activateSearch()\n                        },\n                        accessibilityLabel: self.presentationData.strings.Common_Search\n                    )\n\n",
+              "                    self.primaryContext?.searchButton = NavigationBarComponent.Button(id: \"search\",\n                        content: .icon(imageName: \"Chat List/SearchIcon\"),\n                        action: { [weak self] _ in\n                            self?.activateSearch()\n                        },\n                        accessibilityLabel: self.presentationData.strings.Common_Search\n                    )\n\n",
               "",
               "remove top-right search button")
           PY
