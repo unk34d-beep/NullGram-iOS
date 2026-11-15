@@ -7,7 +7,21 @@ permissions:
   contents: read
 
 jobs:
+  verify_swift_optimization_flag:
+    runs-on: macos-26
+    steps:
+      - name: Verify copy-propagation flag with optimization
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/flag-check.swift" <<'SWIFT'
+          @inline(never) func identity(_ value: Int) -> Int { value }
+          print(identity(42))
+          SWIFT
+          xcrun swiftc -O -Xllvm -sil-disable-pass=copy-propagation "$RUNNER_TEMP/flag-check.swift" -o "$RUNNER_TEMP/flag-check"
+          "$RUNNER_TEMP/flag-check"
+
   build:
+    needs: verify_swift_optimization_flag
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +62,21 @@ jobs:
                   raise SystemExit(f"Unsupported reservedRegions call remains in {path}")
               path.write_text(updated)
               print(f"Removed unsupported iOS 27.1 UIKit call from {path}", flush=True)
+          PY
+
+      - name: Disable CopyPropagation for ShareScreen only
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("submodules/TelegramUI/Components/ShareScreen/BUILD")
+          source = path.read_text()
+          old = '    copts = [\n        "-warnings-as-errors",\n    ],'
+          new = '    copts = [\n        "-warnings-as-errors",\n        "-Xllvm",\n        "-sil-disable-pass=copy-propagation",\n    ],'
+          if source.count(old) != 1:
+              raise SystemExit(f"Expected one ShareScreen copts block, got {source.count(old)}")
+          path.write_text(source.replace(old, new, 1))
+          print("Disabled CopyPropagation for ShareScreen only", flush=True)
           PY
 
       - name: Select Xcode 26.6 with iOS 26.5 SDK
