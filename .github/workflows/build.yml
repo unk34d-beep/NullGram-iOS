@@ -34,7 +34,7 @@ jobs:
           from pathlib import Path
           import re
 
-          pattern = re.compile(r'(?m)^[ \\t]*if #available\\(iOS 27\\.1, \\*\\) \\{\\n[ \\t]*return [^\\n]*reservedRegions[^\\n]*\\n[ \\t]*\\}\\n')
+          pattern = re.compile(r'(?m)^[ \t]*if #available\(iOS 27\.1, \*\) \{\n[ \t]*return [^\n]*reservedRegions[^\n]*\n[ \t]*\}\n')
           files = [
               Path("submodules/Display/Source/ReservedArea.swift"),
               Path("submodules/Display/Source/WindowContent.swift"),
