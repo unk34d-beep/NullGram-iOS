@@ -135,6 +135,9 @@ jobs:
                 ]
           self.controller = RMIntroViewController(backgroundColor: theme.list.plainBackgroundColor, primaryColor: theme.list.itemPrimaryTextColor, buttonColor: theme.intro.startButtonColor, accentColor: theme.list.itemAccentColor, regularDotColor: theme.intro.dotColor, highlightedDotColor: theme.list.itemAccentColor, headlines: tourHeadlines, descriptions: tourDescriptions, suggestedLocalizationSignal: localizationSignal)"""
           replace_exact("submodules/AuthorizationUI/Sources/AuthorizationSequenceSplashController.swift", old_call, new_call)
+          replace_exact("submodules/AuthorizationUI/Sources/AuthorizationSequenceSplashController.swift",
+              "// The tour is shown in English (it reads the en bundle); the page indicator's VoiceOver label follows it.",
+              "// Tour headings and descriptions use the selected Russian or English UI language.")
           replace_exact(
               "submodules/RMIntro/PublicHeaders/RMIntro/RMIntroViewController.h",
               "highlightedDotColor:(UIColor *)highlightedDotColor suggestedLocalizationSignal:(SSignal *)suggestedLocalizationSignal;",
@@ -171,20 +174,31 @@ jobs:
               raise SystemExit("Telegram resources anchor missing or NullGramLogo already registered")
           telegram_build.write_text(source.replace(marker, marker + '\n        "//submodules/RMIntro:NullGramLogo",', 1))
           controller = Path("submodules/RMIntro/Sources/platform/ios/RMIntroViewController.m")
+          replace_exact(str(controller),
+              "    UIView *_startButton;\n",
+              "    UIView *_startButton;\n    UIImageView *_nullGramLogoView;\n")
           source = controller.read_text()
           marker = "        [self.view addSubview:_glkView];\n"
-          if source.count(marker) != 1 or "UIImageView *nullGramLogoView" in source:
+          if source.count(marker) != 1 or "[_glkView addSubview:_nullGramLogoView]" in source:
               raise SystemExit("RMIntro logo insertion anchor missing or already patched")
-          source = source.replace(marker, marker + """        UIImage *nullGramLogo = [UIImage imageNamed:@"NullGram"];
-          if (nullGramLogo != nil) {
-              UIImageView *nullGramLogoView = [[UIImageView alloc] initWithImage:nullGramLogo];
-              nullGramLogoView.frame = _glkView.bounds;
-              nullGramLogoView.contentMode = UIViewContentModeScaleAspectFit;
-              nullGramLogoView.userInteractionEnabled = false;
-              [_glkView addSubview:nullGramLogoView];
-          }
+          source = source.replace(marker, marker + """        _nullGramLogoView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"NullGram"]];
+          _nullGramLogoView.frame = _glkView.bounds;
+          _nullGramLogoView.contentMode = UIViewContentModeScaleAspectFit;
+          _nullGramLogoView.userInteractionEnabled = false;
+          _nullGramLogoView.hidden = _currentPage != 0;
+          [_glkView addSubview:_nullGramLogoView];
           """, 1)
           controller.write_text(source)
+          replace_exact(str(controller),
+              "        _currentPage = MAX(0, MIN(5, _currentPage));\n",
+              "        _currentPage = MAX(0, MIN(5, _currentPage));\n        _nullGramLogoView.hidden = _currentPage != 0;\n")
+          replace_exact(str(controller),
+              "    _currentPage = page;\n",
+              "    _currentPage = page;\n    _nullGramLogoView.hidden = _currentPage != 0;\n")
+          replace_exact(str(controller),
+              "    UIImage *image = _glkView.snapshot;",
+              "    UIImage *image = (_currentPage == 0 && _nullGramLogoView.image != nil) ? _nullGramLogoView.image : _glkView.snapshot;");
+
 
           # RU/EN login labels are set at render time so server localization packs cannot overwrite them.
           phone_node = "submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryControllerNode.swift"
