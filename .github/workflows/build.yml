@@ -105,6 +105,68 @@ jobs:
               print(f"Removed unsupported iOS 27.1 UIKit call from {path}", flush=True)
           PY
 
+      - name: Fall back when App Group entitlement is unavailable
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("submodules/TelegramUI/Sources/AppDelegate.swift")
+          source = path.read_text()
+
+          replacements = [
+              (
+                  '    private var urlSessions: [URLSession] = []\n',
+                  '    private var hasSharedAppGroupContainer = false\n    private var urlSessions: [URLSession] = []\n',
+                  "URLSession state property",
+              ),
+              (
+                  '        configuration.sharedContainerIdentifier = appGroupName\n',
+                  '        if self.hasSharedAppGroupContainer {\n            configuration.sharedContainerIdentifier = appGroupName\n        }\n',
+                  "background URLSession shared container",
+              ),
+              (
+                  '        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)\n',
+                  '''        let maybeAppGroupUrl = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupName)
+                  self.hasSharedAppGroupContainer = maybeAppGroupUrl != nil
+                  let appGroupUrl: URL
+                  if let maybeAppGroupUrl {
+                      appGroupUrl = maybeAppGroupUrl
+                  } else {
+                      let fallbackUrl = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NullGram", isDirectory: true)
+                      do {
+                          try FileManager.default.createDirectory(at: fallbackUrl, withIntermediateDirectories: true)
+                          appGroupUrl = fallbackUrl
+                      } catch {
+                          NSLog("Failed to create local app data directory: %@", String(describing: error))
+                          self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Unable to create local app data directory.", preferredStyle: .alert))
+                          return true
+                      }
+                  }
+          ''',
+                  "app-group storage fallback",
+              ),
+              (
+                  '''        guard let appGroupUrl = maybeAppGroupUrl else {
+                      self.mainWindow?.presentNative(UIAlertController(title: nil, message: "Error 2", preferredStyle: .alert))
+                      return true
+                  }
+          ''',
+                  "",
+                  "blocking App Group guard",
+              ),
+          ]
+
+          for old, new, label in replacements:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one {label} target in {path}, found {count}")
+              source = source.replace(old, new, 1)
+
+          path.write_text(source)
+          print("App Group fallback applied; local storage will be used when the entitlement is missing.", flush=True)
+          PY
+
       - name: Set ShareScreen to -Onone
         run: |
           set -euo pipefail
