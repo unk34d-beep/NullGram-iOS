@@ -80,7 +80,189 @@ jobs:
           mkdir -p Telegram/Telegram-iOS/Telegram.icon/Assets
           test -s NullGram.png
           cp NullGram.png Telegram/Telegram-iOS/Telegram.icon/Assets/NullGram.png
+          mkdir -p submodules/RMIntro/Sources/platform/ios/Resources
+          cp NullGram.png submodules/RMIntro/Sources/platform/ios/Resources/NullGram.png
 
+
+      - name: Apply NullGram onboarding, login, stars and app-name text
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_exact(path_text, old, new, expected=1):
+              path = Path(path_text)
+              source = path.read_text()
+              count = source.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} occurrence(s), found {count} for {old!r}")
+              path.write_text(source.replace(old, new, expected))
+              print(f"Patched {path}: {expected} replacement(s)", flush=True)
+
+          # Pass the selected UI language and tour copy from Swift into RMIntro.
+          replace_exact(
+              "submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift",
+              "AuthorizationSequenceSplashController(accountManager: self.sharedContext.accountManager, account: self.account, theme: self.presentationData.theme)",
+              "AuthorizationSequenceSplashController(accountManager: self.sharedContext.accountManager, account: self.account, theme: self.presentationData.theme, strings: self.presentationData.strings)",
+          )
+          replace_exact(
+              "submodules/AuthorizationUI/Sources/AuthorizationSequenceSplashController.swift",
+              "init(accountManager: AccountManager<TelegramAccountManagerTypes>, account: UnauthorizedAccount, theme: PresentationTheme) {",
+              "init(accountManager: AccountManager<TelegramAccountManagerTypes>, account: UnauthorizedAccount, theme: PresentationTheme, strings: PresentationStrings) {",
+          )
+          old_call = "        self.controller = RMIntroViewController(backgroundColor: theme.list.plainBackgroundColor, primaryColor: theme.list.itemPrimaryTextColor, buttonColor: theme.intro.startButtonColor, accentColor: theme.list.itemAccentColor, regularDotColor: theme.intro.dotColor, highlightedDotColor: theme.list.itemAccentColor, suggestedLocalizationSignal: localizationSignal)"
+          new_call = """        let isRussian = strings.baseLanguageCode.hasPrefix("ru")
+          let tourHeadlines = isRussian
+              ? ["NullGram", "Облегчённый", "Бесплатный", "Безлимитный", "Защищённый", "Облако"]
+              : ["NullGram", "Lightweight", "Free", "Unlimited", "Secure", "Cloud"]
+          let tourDescriptions = isRussian
+              ? [
+                  "Неофициальный клиент Telegram от @TheNullV4",
+                  "Удалены все ненужные функции, которые нагружают телефон",
+                  "Это вам не «Вероника», которая просит выйти из iCloud и установить NullGram",
+                  "Вам не надо платить за место на серверах Telegram (не то что ваш iCloud+)",
+                  "Мы не видим ваши переписки, так как вы используете Telegram API",
+                  "Там ваши переписки и всё подобное"
+                ]
+              : [
+                  "Unofficial Telegram client by @TheNullV4",
+                  "All unnecessary features that drain your phone have been removed",
+                  "Unlike \"Veronica\", we won't ask you to sign out of iCloud to install NullGram",
+                  "You don't pay for space on Telegram's servers (unlike your iCloud+)",
+                  "We can't see your chats, because you connect through the Telegram API",
+                  "Your chats and everything else are stored there"
+                ]
+          self.controller = RMIntroViewController(backgroundColor: theme.list.plainBackgroundColor, primaryColor: theme.list.itemPrimaryTextColor, buttonColor: theme.intro.startButtonColor, accentColor: theme.list.itemAccentColor, regularDotColor: theme.intro.dotColor, highlightedDotColor: theme.list.itemAccentColor, headlines: tourHeadlines, descriptions: tourDescriptions, suggestedLocalizationSignal: localizationSignal)"""
+          replace_exact("submodules/AuthorizationUI/Sources/AuthorizationSequenceSplashController.swift", old_call, new_call)
+          replace_exact(
+              "submodules/RMIntro/PublicHeaders/RMIntro/RMIntroViewController.h",
+              "highlightedDotColor:(UIColor *)highlightedDotColor suggestedLocalizationSignal:(SSignal *)suggestedLocalizationSignal;",
+              "highlightedDotColor:(UIColor *)highlightedDotColor headlines:(NSArray<NSString *> *)headlines descriptions:(NSArray<NSString *> *)descriptions suggestedLocalizationSignal:(SSignal *)suggestedLocalizationSignal;",
+          )
+          replace_exact(
+              "submodules/RMIntro/Sources/platform/ios/RMIntroViewController.m",
+              "highlightedDotColor:(UIColor *)highlightedDotColor suggestedLocalizationSignal:(SSignal *)suggestedLocalizationSignal\n",
+              "highlightedDotColor:(UIColor *)highlightedDotColor headlines:(NSArray<NSString *> *)headlines descriptions:(NSArray<NSString *> *)descriptions suggestedLocalizationSignal:(SSignal *)suggestedLocalizationSignal\n",
+          )
+          replace_exact(
+              "submodules/RMIntro/Sources/platform/ios/RMIntroViewController.m",
+              '        _headlines = @[ _englishStrings[@"Tour.Title1"], _englishStrings[@"Tour.Title2"],  _englishStrings[@"Tour.Title6"], _englishStrings[@"Tour.Title3"], _englishStrings[@"Tour.Title4"], _englishStrings[@"Tour.Title5"]];',
+              "        _headlines = headlines;",
+          )
+          replace_exact(
+              "submodules/RMIntro/Sources/platform/ios/RMIntroViewController.m",
+              '_descriptions = @[_englishStrings[@"Tour.Text1"], _englishStrings[@"Tour.Text2"],  _englishStrings[@"Tour.Text6"], _englishStrings[@"Tour.Text3"], _englishStrings[@"Tour.Text4"], _englishStrings[@"Tour.Text5"]];',
+              "        _descriptions = descriptions;",
+          )
+
+          # Bundle the provided NullGram artwork into the app and show it over the intro animation.
+          rm_intro_build = Path("submodules/RMIntro/BUILD")
+          source = rm_intro_build.read_text()
+          marker = 'objc_library(\n    name = "RMIntro",'
+          if source.count(marker) != 1 or 'name = "NullGramLogo"' in source:
+              raise SystemExit("RMIntro BUILD anchor missing or NullGramLogo already exists")
+          source = source.replace(marker, 'filegroup(\n    name = "NullGramLogo",\n    srcs = ["Sources/platform/ios/Resources/NullGram.png"],\n)\n\n' + marker, 1)
+          rm_intro_build.write_text(source)
+          telegram_build = Path("Telegram/BUILD")
+          source = telegram_build.read_text()
+          marker = '    resources = [\n        ":LaunchScreen",'
+          if source.count(marker) != 1 or '"//submodules/RMIntro:NullGramLogo"' in source:
+              raise SystemExit("Telegram resources anchor missing or NullGramLogo already registered")
+          telegram_build.write_text(source.replace(marker, marker + '\n        "//submodules/RMIntro:NullGramLogo",', 1))
+          controller = Path("submodules/RMIntro/Sources/platform/ios/RMIntroViewController.m")
+          source = controller.read_text()
+          marker = "        self.view addSubview:_glkView;\n"
+          if source.count(marker) != 1 or "UIImageView *nullGramLogoView" in source:
+              raise SystemExit("RMIntro logo insertion anchor missing or already patched")
+          source = source.replace(marker, marker + """        UIImage *nullGramLogo = [UIImage imageNamed:@"NullGram"];
+          if (nullGramLogo != nil) {
+              UIImageView *nullGramLogoView = [[UIImageView alloc] initWithImage:nullGramLogo];
+              nullGramLogoView.frame = _glkView.bounds;
+              nullGramLogoView.contentMode = UIViewContentModeScaleAspectFit;
+              nullGramLogoView.userInteractionEnabled = false;
+              [_glkView addSubview:nullGramLogoView];
+          }
+          """, 1)
+          controller.write_text(source)
+
+          # RU/EN login labels are set at render time so server localization packs cannot overwrite them.
+          phone_node = "submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryControllerNode.swift"
+          replace_exact(phone_node,
+              "account == nil ? strings.Login_NewNumber : strings.Login_PhoneTitle",
+              'strings.baseLanguageCode.hasPrefix("ru") ? "Номер телефона" : "Phone number"')
+          replace_exact(phone_node,
+              "account == nil ? strings.ChangePhoneNumberNumber_Help : strings.Login_PhoneAndCountryHelp",
+              'account == nil ? (strings.baseLanguageCode.hasPrefix("ru") ? "Выберите регион и введите свой номер телефона ниже" : "Select your region and enter your phone number below") : strings.Login_PhoneAndCountryHelp')
+          replace_exact(phone_node,
+              "self.account == nil ? self.strings.Login_NewNumber : self.strings.Login_PhoneTitle",
+              'self.strings.baseLanguageCode.hasPrefix("ru") ? "Номер телефона" : "Phone number"')
+          replace_exact(phone_node,
+              "NSAttributedString(string: strings.Login_PhoneNumberConfirmation, font:",
+              'NSAttributedString(string: strings.baseLanguageCode.hasPrefix("ru") ? "Здесь всё указано правильно?" : "Is everything correct here?", font:')
+          replace_exact(phone_node,
+              "self.cancelButton.setTitle(strings.Login_Edit, with:",
+              'self.cancelButton.setTitle(strings.baseLanguageCode.hasPrefix("ru") ? "Поправить" : "Edit", with:')
+          replace_exact(phone_node,
+              "self.cancelButton.accessibilityLabel = strings.Login_Edit",
+              'self.cancelButton.accessibilityLabel = strings.baseLanguageCode.hasPrefix("ru") ? "Поправить" : "Edit"')
+          replace_exact(phone_node,
+              "SolidRoundedButtonNode(title: strings.Login_Continue, theme: SolidRoundedButtonTheme(theme: theme), glass: false, height: 50.0, cornerRadius: 50.0 * 0.5)",
+              'SolidRoundedButtonNode(title: strings.baseLanguageCode.hasPrefix("ru") ? "Да" : "Yes", theme: SolidRoundedButtonTheme(theme: theme), glass: false, height: 50.0, cornerRadius: 50.0 * 0.5)')
+
+          phone_controller = "submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift"
+          replace_exact(phone_controller,
+              "title: self.presentationData.strings.Login_Edit",
+              'title: self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Поправить" : "Edit"')
+          replace_exact(phone_controller,
+              "title: self.presentationData.strings.Login_Yes",
+              'title: self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Да" : "Yes"')
+          replace_exact(phone_controller,
+              "text: self.presentationData.strings.Login_PhoneNumberConfirmation",
+              'text: self.presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Здесь всё указано правильно?" : "Is everything correct here?"')
+
+          code_node = "submodules/AuthorizationUI/Sources/AuthorizationSequenceCodeEntryControllerNode.swift"
+          replace_exact(code_node, "self.strings.Login_EnterCodeTelegramTitle",
+              'self.strings.baseLanguageCode.hasPrefix("ru") ? "Введите код" : "Enter code"', expected=2)
+          auth_text = "submodules/AuthorizationUtils/Sources/AuthorizationOptionText.swift"
+          replace_exact(auth_text,
+              "return parseMarkdownIntoAttributedString(strings.Login_EnterCodeTelegramText(phoneNumber).string, attributes: attributes, textAlignment: .center)",
+              'let message = strings.baseLanguageCode.hasPrefix("ru") ? "Код отправлен **в ваш Telegram-аккаунт**, а не по SMS" : "The code was sent **to your Telegram account**, not by SMS"\n        return parseMarkdownIntoAttributedString(message, attributes: attributes, textAlignment: .center)')
+          replace_exact(auth_text,
+              "strings.Login_HaveNotReceivedCodeInternal",
+              '(strings.baseLanguageCode.hasPrefix("ru") ? "Нет кода?" : "No code?")',
+              expected=2)
+
+          code_controller = "submodules/AuthorizationUI/Sources/AuthorizationSequenceCodeEntryController.swift"
+          replace_exact(code_controller,
+              """text = presentationData.strings.Login_CancelPhoneVerification
+                  proceed = presentationData.strings.Login_CancelPhoneVerificationContinue
+                  stop = presentationData.strings.Login_CancelPhoneVerificationStop""",
+              """let isRussian = presentationData.strings.baseLanguageCode.hasPrefix("ru")
+                  text = isRussian ? "Вы хотите прервать вход в аккаунт?" : "Do you want to cancel signing in?"
+                  proceed = isRussian ? "Нет" : "No"
+                  stop = isRussian ? "Да" : "Yes" """)
+          replace_exact(
+              "submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift",
+              "presentationData.strings.Gift_Store_Balance_MyStars",
+              'presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Звёзды" : "Stars",
+          )
+
+          # The only localized display-name overrides in InfoPlist.strings must agree with the bundle name.
+          name_files = list(Path("Telegram/Telegram-iOS").glob("*.lproj/InfoPlist.strings"))
+          found = 0
+          for path in name_files:
+              source = path.read_text()
+              updated, count = re.subn(r'(?m)^("CFBundleDisplayName"\s*=\s*)"[^"]*";', r'\1"NullGram";', source)
+              found += count
+              path.write_text(updated)
+          if found < 1:
+              raise SystemExit("No localized CFBundleDisplayName entries found")
+          for path in name_files:
+              if re.search(r'(?m)^"CFBundleDisplayName"\s*=\s*"(?!NullGram")[^"]*";', path.read_text()):
+                  raise SystemExit(f"Unexpected localized app name remains in {path}")
+          print(f"Set NullGram display name in {found} localized InfoPlist.strings entries.", flush=True)
+          PY
 
       - name: Remove iOS 27.1-only UIKit APIs
         run: |
