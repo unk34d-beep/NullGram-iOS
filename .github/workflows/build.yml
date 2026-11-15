@@ -236,8 +236,22 @@ jobs:
           code_controller = "submodules/AuthorizationUI/Sources/AuthorizationSequenceCodeEntryController.swift"
           code_controller_path = Path("submodules/AuthorizationUI/Sources/AuthorizationSequenceCodeEntryController.swift")
           source = code_controller_path.read_text()
-          pattern = re.compile(
-              r'(?m)^(?P<indent>[ \\t]*)text = presentationData\\.strings\\.Login_CancelPhoneVerification\\n(?P=indent)proceed = presentationData\\.strings\\.Login_CancelPhoneVerificationContinue\\n(?P=indent)stop = presentationData\\.strings\\.Login_CancelPhoneVerificationStop
+          old_block = "\n".join([
+              "                text = presentationData.strings.Login_CancelPhoneVerification",
+              "                proceed = presentationData.strings.Login_CancelPhoneVerificationContinue",
+              "                stop = presentationData.strings.Login_CancelPhoneVerificationStop",
+          ])
+          new_block = "\n".join([
+              "                let isRussian = presentationData.strings.baseLanguageCode.hasPrefix(\"ru\")",
+              "                text = isRussian ? \"Вы хотите прервать вход в аккаунт?\" : \"Do you want to cancel signing in?\"",
+              "                proceed = isRussian ? \"Нет\" : \"No\"",
+              "                stop = isRussian ? \"Да\" : \"Yes\"",
+          ])
+          if source.count(old_block) != 1:
+              raise SystemExit(f"Expected one phone verification cancellation block, found {source.count(old_block)}")
+          code_controller_path.write_text(source.replace(old_block, new_block, 1))
+          print("Patched phone sign-in cancellation confirmation.", flush=True)
+
           replace_exact(
               "submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift",
               "presentationData.strings.Gift_Store_Balance_MyStars",
