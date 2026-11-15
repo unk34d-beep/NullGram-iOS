@@ -25,6 +25,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify Make.py cache arguments
+        run: |
+          set -euo pipefail
+          python3 build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="$RUNNER_TEMP/bazel-user-root" --cacheDir="$RUNNER_TEMP/bazel-disk-cache" build --help > "$RUNNER_TEMP/make-build-help.txt"
+          grep -F -- '--configurationPath' "$RUNNER_TEMP/make-build-help.txt"
+          echo "Make.py accepted --bazelUserRoot and --cacheDir before build."
+
       - name: Create a fake IPA fixture
         run: |
           set -euo pipefail
@@ -181,7 +188,7 @@ jobs:
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
           echo "Starting Bazel build; build number $BUILD_NUMBER"
-          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" build --continueOnError --disk_cache="$RUNNER_TEMP/bazel-disk-cache" --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
+          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" --cacheDir="$RUNNER_TEMP/bazel-disk-cache" build --continueOnError --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
           mkdir -p build/artifacts
           IPA_PATH="bazel-bin/Telegram/Telegram.ipa"
           if [ ! -s "$IPA_PATH" ]; then echo "::error::Expected IPA is missing or empty: $IPA_PATH"; exit 1; fi
