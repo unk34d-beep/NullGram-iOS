@@ -2,6 +2,9 @@ name: NullGram iOS
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
 
 permissions:
   contents: read
@@ -126,6 +129,31 @@ jobs:
               raise SystemExit("CloudDataContextImpl construction remains after patch")
           path.write_text(updated)
           print("CloudKit data context disabled.", flush=True)
+          PY
+
+      - name: Stub Siri authorization (no Siri entitlement)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path("submodules/TelegramUI/Sources/AppDelegate.swift")
+          source = path.read_text()
+          if "enum NullINPreferences" in source:
+              raise SystemExit("Siri authorization stub is already present")
+          updated, count = re.subn(r'\bINPreferences\.', 'NullINPreferences.', source)
+          if count < 1:
+              raise SystemExit("INPreferences not found")
+          shim = '''
+
+          enum NullINPreferences {
+              static func siriAuthorizationStatus() -> INSiriAuthorizationStatus { return .denied }
+              static func requestSiriAuthorization(_ handler: @escaping (INSiriAuthorizationStatus) -> Void) { handler(.denied) }
+          }
+          '''
+          path.write_text(updated + shim)
+          print(f"Siri authorization stubbed ({count} call sites)", flush=True)
           PY
 
       - name: Fall back when App Group entitlement is unavailable
