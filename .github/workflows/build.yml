@@ -26,6 +26,30 @@ jobs:
           test -s NullGram.png
           cp NullGram.png Telegram/Telegram-iOS/Telegram.icon/Assets/NullGram.png
 
+
+      - name: Remove iOS 27.1-only UIKit APIs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          pattern = re.compile(r'(?m)^[ \\t]*if #available\\(iOS 27\\.1, \\*\\) \\{\\n[ \\t]*return [^\\n]*reservedRegions[^\\n]*\\n[ \\t]*\\}\\n')
+          files = [
+              Path("submodules/Display/Source/ReservedArea.swift"),
+              Path("submodules/Display/Source/WindowContent.swift"),
+          ]
+          for path in files:
+              source = path.read_text()
+              updated, count = pattern.subn("", source)
+              if count != 1:
+                  raise SystemExit(f"Expected one iOS 27.1 reservedRegions block in {path}, got {count}")
+              if "reservedRegions(" in updated:
+                  raise SystemExit(f"Unsupported reservedRegions call remains in {path}")
+              path.write_text(updated)
+              print(f"Removed unsupported iOS 27.1 UIKit call from {path}", flush=True)
+          PY
+
       - name: Select Xcode 26.6 with iOS 26.5 SDK
         run: |
           set -euo pipefail
