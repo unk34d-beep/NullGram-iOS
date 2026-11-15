@@ -140,7 +140,7 @@ jobs:
               "// Tour headings and descriptions use the selected Russian or English UI language.")
           replace_exact("submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryControllerNode.swift",
               "            self.textActivateAreaNode.accessibilityLabel = \"\\(self.code) \\(self.number). \\(self.strings.Login_PhoneNumberConfirmation)\"",
-              "            let confirmationText = self.strings.baseLanguageCode.hasPrefix(\"ru\") ? \"Здесь всё указано правильно?\" : \"Is everything correct here?\"\\n            self.textActivateAreaNode.accessibilityLabel = \"\\(self.code) \\(self.number). \\(confirmationText)\"")
+              "            let confirmationText = self.strings.baseLanguageCode.hasPrefix(\"ru\") ? \"Здесь всё указано правильно?\" : \"Is everything correct here?\"\n            self.textActivateAreaNode.accessibilityLabel = \"\\(self.code) \\(self.number). \\(confirmationText)\"")
           replace_exact(
               "submodules/RMIntro/PublicHeaders/RMIntro/RMIntroViewController.h",
               "highlightedDotColor:(UIColor *)highlightedDotColor suggestedLocalizationSignal:(SSignal *)suggestedLocalizationSignal;",
@@ -270,7 +270,7 @@ jobs:
           replace_exact(
               "submodules/TelegramUI/Components/Gifts/GiftStoreScreen/Sources/GiftStoreScreen.swift",
               "presentationData.strings.Gift_Store_Balance_MyStars",
-              'presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Звёзды" : "Stars',
+              'presentationData.strings.baseLanguageCode.hasPrefix("ru") ? "Звёзды" : "Stars"',
           )
 
           # The only localized display-name overrides in InfoPlist.strings must agree with the bundle name.
