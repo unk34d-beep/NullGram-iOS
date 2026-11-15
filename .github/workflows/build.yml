@@ -7,21 +7,21 @@ permissions:
   contents: read
 
 jobs:
-  verify_swift_optimization_flag:
+  verify_share_screen_onone:
     runs-on: macos-26
     steps:
-      - name: Verify copy-propagation flag with optimization
+      - name: Verify Swift -Onone flag
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/flag-check.swift" <<'SWIFT'
           @inline(never) func identity(_ value: Int) -> Int { value }
           print(identity(42))
           SWIFT
-          xcrun swiftc -O -Xllvm -sil-disable-pass=copy-propagation "$RUNNER_TEMP/flag-check.swift" -o "$RUNNER_TEMP/flag-check"
+          xcrun swiftc -Onone "$RUNNER_TEMP/flag-check.swift" -o "$RUNNER_TEMP/flag-check"
           "$RUNNER_TEMP/flag-check"
 
   build:
-    needs: verify_swift_optimization_flag
+    needs: verify_share_screen_onone
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
               print(f"Removed unsupported iOS 27.1 UIKit call from {path}", flush=True)
           PY
 
-      - name: Disable CopyPropagation for ShareScreen only
+      - name: Set ShareScreen to -Onone
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -72,7 +72,7 @@ jobs:
           path = Path("submodules/TelegramUI/Components/ShareScreen/BUILD")
           source = path.read_text()
           old = '    copts = [\n        "-warnings-as-errors",\n    ],'
-          new = '    copts = [\n        "-warnings-as-errors",\n        "-Xllvm",\n        "-sil-disable-pass=copy-propagation",\n    ],'
+          new = '    copts = [\n        "-warnings-as-errors",\n        "-Onone",\n    ],'
           if source.count(old) != 1:
               raise SystemExit(f"Expected one ShareScreen copts block, got {source.count(old)}")
           path.write_text(source.replace(old, new, 1))
@@ -139,7 +139,7 @@ jobs:
           COMMIT_COUNT="$(git rev-list --count HEAD)"
           BUILD_NUMBER="$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))"
           echo "Starting Bazel build; build number $BUILD_NUMBER"
-          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" build --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
+          python3 -u build-system/Make/Make.py --overrideXcodeVersion --bazelUserRoot="/private/var/tmp/_bazel_containerhost" build --continueOnError --configurationPath="build-system/appstore-configuration.json" --codesigningInformationPath=build-system/fake-codesigning --configuration=release_arm64 --buildNumber="$BUILD_NUMBER"
           mkdir -p build/artifacts
           IPA_PATH="$(find bazel-out -path '*/bin/Telegram/*.ipa' -print -quit)"
           if [ -z "$IPA_PATH" ]; then echo "::error::IPA output not found"; exit 1; fi
